@@ -33,8 +33,12 @@
 
 </script>
 <style  scoped>
-
-  
+#container{
+    margin: 0;
+}
+.nav{
+    
+}
 </style>
 
 

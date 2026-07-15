@@ -61,17 +61,31 @@
                 </div>
                 <!-- 登录表单 -->
             
-                <div class="login-wrap">
+                <form class="login-wrap" autocomplete="off" @submit.prevent="login">
 
                     <div class="input-item">
-                        <input type="text" placeholder="请输入用户名" class="input" v-model="form.username">
+                        <input
+                          type="text"
+                          name="login_username"
+                          autocomplete="off"
+                          placeholder="请输入用户名"
+                          class="input"
+                          v-model="form.username"
+                        >
                     </div>
                     <!-- 用户未填写提示 -->
                     <p class="err-tip" v-if="errMsg.username">{{errMsg.username }} </p>
 
 
                     <div class="input-item">
-                        <input type="password" placeholder="请输入登录密码" class="input" v-model="form.password">
+                        <input
+                          type="password"
+                          name="login_password"
+                          autocomplete="off"
+                          placeholder="请输入登录密码"
+                          class="input"
+                          v-model="form.password"
+                        >
                     </div>
                      <!-- 用户未填写提示 -->
                     <p class="err-tip" v-if="errMsg.password">{{errMsg.password }} </p>
@@ -79,7 +93,14 @@
 
 
                     <div class="input-item">
-                        <input type="text" placeholder="请输入验证码" class="input" v-model="form.code">
+                        <input
+                          type="text"
+                          name="code"
+                          autocomplete="off"
+                          placeholder="请输入验证码"
+                          class="input"
+                          v-model="form.code"
+                        >
                         <img src="../assets/yzm-code.png" alt="验证码" class="yzm">
                     </div>
                      <!-- 用户未填写提示 -->
@@ -99,8 +120,8 @@
                         <span class="forget-password">忘记密码？</span>
                     </div>
                     <!-- 登录按钮 -->
-                    <div class="login-button" @click="login">登录</div>
-                </div>
+                    <button class="login-button" type="submit">登录</button>
+                </form>
             </div>
         </div>
     </div>
@@ -109,79 +130,159 @@
 
 <script>
 import { loginApi } from '@/api/request'
-import Cookies from 'js-cookie'; //引入cookies工具
+
+const REMEMBER_COOKIE = 'saveUserInfo'
+const REMEMBER_SECRET = 'nova-admin-system-remember-2026'
+
+function bufferToBase64Url(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte)
+  })
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function base64UrlToBuffer(value) {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=')
+  const binary = atob(padded)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
+async function getRememberKey() {
+  const secretBytes = new TextEncoder().encode(REMEMBER_SECRET)
+  const keyBytes = await window.crypto.subtle.digest('SHA-256', secretBytes)
+  return window.crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+
 export default {
   data() {
     return {
       form: { username: '', password: '', code: '' },
       isRemember: false,
       // 每个输入框独立错误
-     errMsg: {
-      username: '',
-      password: '',
-      code: ''
-     }
+      errMsg: {
+        username: '',
+        password: '',
+        code: ''
+      }
     }
- 
   },
-   //  页面加载时读取cookie，回填账号密码
-   //启用vue2 生命钩子
-   created(){ 
-    const saveUser =Cookies.get('saveUserInfo') //cookies 在本地的名称为saveUserInfo
-    if(saveUser){
-      const userObj = JSON.parse(saveUser)   //将cokies转为json格式
-      this.form.username =userObj.username
-      this.form.password =userObj.password
-      this.isRemember =true
-    }
-   },
+  created() {
+    this.fillRememberLogin()
+  },
   methods: {
-    
-    async login() {
-        // 初始化 为空
-     this.errMsg.username = ''
-    this.errMsg.password = ''
-    this.errMsg.code = ''
+    getCookie(name) {
+      const target = `${name}=`
+      const item = document.cookie
+        .split('; ')
+        .find((cookieItem) => cookieItem.startsWith(target))
+      return item ? decodeURIComponent(item.slice(target.length)) : ''
+    },
+    setCookie(name, value, expiresDays) {
+      document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${expiresDays * 24 * 60 * 60}; path=/`
+    },
+    removeCookie(name) {
+      document.cookie = `${name}=; Max-Age=0; path=/`
+    },
+    async encryptRememberInfo(data) {
+      const iv = window.crypto.getRandomValues(new Uint8Array(12))
+      const key = await getRememberKey()
+      const encrypted = await window.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        new TextEncoder().encode(JSON.stringify(data))
+      )
+      return `${bufferToBase64Url(iv)}.${bufferToBase64Url(encrypted)}`
+    },
+    async decryptRememberInfo(value) {
+      const [ivText, encryptedText] = String(value || '').split('.')
+      if (!ivText || !encryptedText) return null
 
-    let flag =true
-    if(!this.form.username){
-        this.errMsg.username = '请输入用户名'
-        flag =false
-    }
-    if(!this.form.password){
-        this.errMsg.password ='请输入登录密码'
-        flag =false
-    }
-    if (!this.form.code) {
-    this.errMsg.code = '请输入图形验证码'
-    flag = false
-  }
-  // 有任意一项为空，直接终止请求
-  if (!flag) return
+      const key = await getRememberKey()
+      const decrypted = await window.crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(base64UrlToBuffer(ivText)) },
+        key,
+        base64UrlToBuffer(encryptedText)
+      )
+      return JSON.parse(new TextDecoder().decode(decrypted))
+    },
+    async fillRememberLogin() {
+      const encryptedUser = this.getCookie(REMEMBER_COOKIE)
+      if (!encryptedUser) return
+
       try {
+        const data = await this.decryptRememberInfo(encryptedUser)
+        if (!data) return
+
+        this.form.username = data.username || ''
+        this.form.password = data.password || ''
+        this.isRemember = true
+      } catch (err) {
+        this.removeCookie(REMEMBER_COOKIE)
+      }
+    },
+    async syncRememberInfo() {
+      if (!this.isRemember) {
+        this.removeCookie(REMEMBER_COOKIE)
+        return
+      }
+
+      try {
+        const encryptedUser = await this.encryptRememberInfo({
+          username: this.form.username,
+          password: this.form.password
+        })
+        this.setCookie(REMEMBER_COOKIE, encryptedUser, 7)
+      } catch (err) {
+        this.removeCookie(REMEMBER_COOKIE)
+      }
+    },
+    async login() {
+      // 清空错误提示
+      this.errMsg.username = ''
+      this.errMsg.password = ''
+      this.errMsg.code = ''
+
+      let flag = true
+      if (!this.form.username) {
+        this.errMsg.username = '请输入用户名'
+        flag = false
+      }
+      if (!this.form.password) {
+        this.errMsg.password = '请输入登录密码'
+        flag = false
+      }
+      if (!this.form.code) {
+        this.errMsg.code = '请输入图形验证码'
+        flag = false
+      }
+      if (!flag) return
+
+      try {
+        // 只保留一次请求，携带isRemember传给后端
         const res = await loginApi({
           username: this.form.username,
           password: this.form.password,
-          code:this.form.code //验证码传后端
+          code: this.form.code,
+          isRemember: this.isRemember
         })
+
         const data = res.data
         if (data.code === 1) {
           alert('登录成功')
-          if (this.isRemember) {
-            // 将cook存入到saveUserInfo
-           Cookies.set(
-            'saveUserInfo',  
-            // 将cookie转换为json
-            JSON.stringify({
-              username:this.form.username,
-              password:this.form.password
-            }),
-            // cookie有效期3天，全部路由读取，携带这条cookie
-            {expires:3,path:'/'}
-           )
-          } else {
-            Cookies.remove('saveUserInfo',{path:'/'})
-          }
+          await this.syncRememberInfo()
           this.$router.push('/admin')
         } else {
           alert(data.msg)
@@ -374,7 +475,7 @@ html,body{
     margin-top: 30px;
   width: 100%;
   height: 56px;
-  line-height: 56px; 
+  line-height: 56px;
   text-align: center; 
   border-radius: 10px;
   font-size: 18px;
@@ -382,6 +483,7 @@ html,body{
   color: #fff;
   background: linear-gradient(90deg, #6e46ee, #f03ca6);
   cursor: pointer;
+  border: none;
 }
 
 /* 报错的样式 */
@@ -391,3 +493,5 @@ html,body{
   margin: 4px 0 18px 0;
 }
 </style>
+
+
