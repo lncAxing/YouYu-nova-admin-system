@@ -1,4 +1,13 @@
 <template>
+
+  <!-- MVC模式
+   M指的是model 数据库，数据，数据处理逻辑（封装与应用程序业务逻辑相关数据以及数据处理方法，可直接访问数据库）
+   V是View，页面视图
+   C是控制器controller，负责转发请求，对请求进行处理  
+   流程:用户访问页面(view) → 触发控制器(Controller)→ 控制器调用Model → 数据返回控制器→ 显示到视图
+   -->
+
+
 <!-- 外部大盒子 用于设置背景 -->
 <div id="container">   
         <!-- 内容盒子 -->
@@ -116,10 +125,11 @@ export default {
  
   },
    //  页面加载时读取cookie，回填账号密码
-   created(){
-    const saveUser =Cookies.get('saveUserInfo')
+   //启用vue2 生命钩子
+   created(){ 
+    const saveUser =Cookies.get('saveUserInfo') //cookies 在本地的名称为saveUserInfo
     if(saveUser){
-      const userObj = JSON.parse(saveUser)
+      const userObj = JSON.parse(saveUser)   //将cokies转为json格式
       this.form.username =userObj.username
       this.form.password =userObj.password
       this.isRemember =true
@@ -164,7 +174,8 @@ export default {
               username:this.form.username,
               password:this.form.password
             }),
-            {expires:7,path:'/'}
+            // cookie有效期3天，全部路由读取，携带这条cookie
+            {expires:3,path:'/'}
            )
           } else {
             Cookies.remove('saveUserInfo',{path:'/'})
