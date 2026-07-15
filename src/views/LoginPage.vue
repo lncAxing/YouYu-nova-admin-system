@@ -134,6 +134,7 @@ import { loginApi } from '@/api/request'
 const REMEMBER_COOKIE = 'saveUserInfo'
 const REMEMBER_SECRET = 'nova-admin-system-remember-2026'
 
+// ArrayBuffer / Uint8Array 不能直接安全写进 cookie，这里统一转成 base64url 字符串。
 function bufferToBase64Url(buffer) {
   const bytes = new Uint8Array(buffer)
   let binary = ''
@@ -143,6 +144,7 @@ function bufferToBase64Url(buffer) {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
+// 读取 cookie 时再把 base64url 转回 ArrayBuffer，供 Web Crypto API 解密使用。
 function base64UrlToBuffer(value) {
   const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
   const padded = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=')
@@ -155,8 +157,11 @@ function base64UrlToBuffer(value) {
 }
 
 async function getRememberKey() {
+  // 用固定字符串派生 AES-256 密钥。
+  // 目的：让 cookie 面板里看不到明文账号密码，只看到加密后的 saveUserInfo。
   const secretBytes = new TextEncoder().encode(REMEMBER_SECRET)
   const keyBytes = await window.crypto.subtle.digest('SHA-256', secretBytes)
+  // importKey 把 SHA-256 结果交给 AES-GCM 使用，后面 encrypt/decrypt 都复用这个 key。
   return window.crypto.subtle.importKey(
     'raw',
     keyBytes,
@@ -180,10 +185,12 @@ export default {
     }
   },
   created() {
+    // 进入登录页时尝试读取 saveUserInfo；如果没有或解不开，就保持空表单。
     this.fillRememberLogin()
   },
   methods: {
     getCookie(name) {
+      // 从 document.cookie 里按名称取 cookie，取不到返回空字符串。
       const target = `${name}=`
       const item = document.cookie
         .split('; ')
@@ -191,34 +198,45 @@ export default {
       return item ? decodeURIComponent(item.slice(target.length)) : ''
     },
     setCookie(name, value, expiresDays) {
+      // 保存加密后的记住我信息，Max-Age 用秒，path=/ 让登录页能读到。
       document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${expiresDays * 24 * 60 * 60}; path=/`
     },
     removeCookie(name) {
+      // 删除 cookie 的通用写法：把 Max-Age 设为 0。
       document.cookie = `${name}=; Max-Age=0; path=/`
     },
     async encryptRememberInfo(data) {
+      // data 形如 { username, password }，先 JSON.stringify，再交给 AES-GCM。
+      // AES-GCM 每次加密都需要新的随机 IV，保证相同账号密码也会生成不同密文。
       const iv = window.crypto.getRandomValues(new Uint8Array(12))
       const key = await getRememberKey()
+      // Web Crypto API 返回的是 ArrayBuffer，不是普通字符串。
       const encrypted = await window.crypto.subtle.encrypt(
         { name: 'AES-GCM', iv },
         key,
         new TextEncoder().encode(JSON.stringify(data))
       )
+      // cookie 保存格式：iv.encrypted，二者都转成 base64url，避免 cookie 特殊字符问题。
+      // 注意：这里只保存密文，不再保存 { username, password } 明文。
       return `${bufferToBase64Url(iv)}.${bufferToBase64Url(encrypted)}`
     },
     async decryptRememberInfo(value) {
+      // saveUserInfo 的格式必须是 iv.encrypted；格式不对就视为无效。
       const [ivText, encryptedText] = String(value || '').split('.')
       if (!ivText || !encryptedText) return null
 
       const key = await getRememberKey()
+      // 使用保存时同一个 IV 和同一个 key 解密，才能还原 JSON 字符串。
       const decrypted = await window.crypto.subtle.decrypt(
         { name: 'AES-GCM', iv: new Uint8Array(base64UrlToBuffer(ivText)) },
         key,
         base64UrlToBuffer(encryptedText)
       )
+      // 解密后的内容才是 { username, password }，随后用于回填表单。
       return JSON.parse(new TextDecoder().decode(decrypted))
     },
     async fillRememberLogin() {
+      // 页面加载回填：只读加密 cookie，不请求后端接口。
       const encryptedUser = this.getCookie(REMEMBER_COOKIE)
       if (!encryptedUser) return
 
@@ -230,22 +248,26 @@ export default {
         this.form.password = data.password || ''
         this.isRemember = true
       } catch (err) {
+        // 旧明文 cookie、损坏密文或密钥变化都会解密失败，直接清掉避免反复报错。
         this.removeCookie(REMEMBER_COOKIE)
       }
     },
     async syncRememberInfo() {
+      // 登录成功后同步记住我状态：没勾选就删除 cookie，勾选才保存加密信息。
       if (!this.isRemember) {
         this.removeCookie(REMEMBER_COOKIE)
         return
       }
 
       try {
+        // 这里才组装账号密码对象；它不会直接写入 cookie，会先进入 encryptRememberInfo 加密。
         const encryptedUser = await this.encryptRememberInfo({
           username: this.form.username,
           password: this.form.password
         })
         this.setCookie(REMEMBER_COOKIE, encryptedUser, 7)
       } catch (err) {
+        // 加密失败时不保留半截或异常 cookie，避免下次页面加载解密报错。
         this.removeCookie(REMEMBER_COOKIE)
       }
     },
