@@ -168,8 +168,10 @@ export default {
         if (data.code === 1) {
           alert('登录成功')
           if (this.isRemember) {
+            // 将cook存入到saveUserInfo
            Cookies.set(
-            'saveUserInfo',
+            'saveUserInfo',  
+            // 将cookie转换为json
             JSON.stringify({
               username:this.form.username,
               password:this.form.password
